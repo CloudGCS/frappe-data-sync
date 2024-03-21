@@ -3,6 +3,7 @@
 
 frappe.ui.form.on("Event Sync Log", {
 	refresh: function (frm) {
+		// todo: if it is Client Box - the logic should be reversed
 		if (frm.doc.status == "Failed") {
 			frm.add_custom_button(__("Resync"), function () {
 				frappe.call({

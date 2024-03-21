@@ -1,6 +1,8 @@
 # Copyright (c) 2019, Frappe Technologies Pvt. Ltd. and contributors
 # License: MIT. See LICENSE
 
+
+from data_sync.data_sync.services.base_app_services import is_service_box
 import frappe
 from frappe.model import no_value_fields, table_fields
 from frappe.model.document import Document
@@ -9,6 +11,10 @@ from frappe.utils.background_jobs import get_jobs
 
 class EventUpdateLog(Document):
 	def after_insert(self):
+		# we design pull-push mechanism so ignore if an event update happens on service box
+		if is_service_box():
+			return
+	
 		"""Send update notification updates to event consumers
 		whenever update log is generated"""
 		enqueued_method = (
@@ -17,7 +23,7 @@ class EventUpdateLog(Document):
 		jobs = get_jobs()
 		if not jobs or enqueued_method not in jobs[frappe.local.site]:
 			frappe.enqueue(
-				enqueued_method, doctype=self.ref_doctype, queue="long", enqueue_after_commit=True
+				enqueued_method, doctype=self.ref_doctype, queue="default", enqueue_after_commit=True
 			)
 
 

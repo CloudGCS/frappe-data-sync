@@ -70,10 +70,11 @@
   }
  ],
  "links": [],
- "modified": "2020-10-26 13:00:15.361316",
+ "modified": "2024-03-17 03:45:37.376347",
  "modified_by": "Administrator",
  "module": "Data Sync",
  "name": "Event Producer",
+ "naming_rule": "By fieldname",
  "owner": "Administrator",
  "permissions": [
   {

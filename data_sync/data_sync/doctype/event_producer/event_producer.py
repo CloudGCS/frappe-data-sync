@@ -6,8 +6,10 @@ import time
 
 import requests
 
+from data_sync.data_sync.services.base_app_services import is_client_box, is_service_box
 import frappe
 from frappe import _
+from frappe.commands.utils import console
 from frappe.custom.doctype.custom_field.custom_field import create_custom_field
 from frappe.frappeclient import FrappeClient
 from frappe.model.document import Document
@@ -17,12 +19,14 @@ from frappe.utils.password import get_decrypted_password
 
 
 class EventProducer(Document):
+	
 	def before_insert(self):
 		self.check_url()
 		self.validate_event_subscriber()
 		self.incoming_change = True
-		self.create_event_consumer()
-		self.create_custom_fields()
+		if is_service_box():	
+			self.create_event_consumer()
+			self.create_custom_fields()
 
 	def validate(self):
 		self.validate_event_subscriber()
@@ -46,9 +50,10 @@ class EventProducer(Document):
 				else:
 					doc_before_save = self.get_doc_before_save()
 					if doc_before_save.api_key != self.api_key or doc_before_save.api_secret != self.api_secret:
+						frappe.msgprint("API Key or Secret has been changed. If you have changes in your document types - re-apply/save them to be effective.")
 						return
-
-					self.update_event_consumer()
+					if is_service_box():
+						self.update_event_consumer()
 					self.create_custom_fields()
 		else:
 			# when producer doc is updated it updates the consumer doc, set flag to avoid deadlock
@@ -230,6 +235,8 @@ def pull_producer_data():
 
 @frappe.whitelist()
 def pull_from_node(event_producer):
+	if is_client_box():
+		frappe.throw(_("Pulling data from producer is not allowed in Client Box"))
 	"""pull all updates after the last update timestamp from event producer site"""
 	event_producer = frappe.get_doc("Event Producer", event_producer)
 	producer_site = get_producer_site(event_producer.producer_url)
@@ -283,12 +290,13 @@ def sync(update, producer_site, event_producer, in_retry=False):
 			return "Synced"
 		log_event_sync(update, event_producer.name, "Synced")
 
-	except Exception:
+	except Exception as e:
+		print(f"Failed: {e.args[0]}")
 		if in_retry:
 			if frappe.flags.in_test:
 				print(frappe.get_traceback())
-			return "Failed"
-		log_event_sync(update, event_producer.name, "Failed", frappe.get_traceback())
+			return f"Failed"
+		log_event_sync(update, event_producer.name, f"Failed", frappe.get_traceback())
 
 	event_producer.set_last_update(update.creation)
 	frappe.db.commit()
@@ -301,7 +309,7 @@ def set_insert(update, producer_site, event_producer):
 		return
 	doc = frappe.get_doc(update.data)
 
-	if update.mapping:
+	if update.mapping and not shall_ignore_mapping_and_dependencies():
 		if update.get("dependencies"):
 			dependencies_created = sync_mapped_dependencies(update.dependencies, producer_site)
 			for fieldname, value in dependencies_created.items():
@@ -325,6 +333,9 @@ def set_update(update, producer_site):
 	if local_doc:
 		data = frappe._dict(update.data)
 
+		if shall_ignore_mapping_and_dependencies() and (data.removed or data.row_changed or data.added):
+			raise Exception("Child Table dependency is not supported")
+
 		if data.changed:
 			local_doc.update(data.changed)
 		if data.removed:
@@ -334,7 +345,7 @@ def set_update(update, producer_site):
 		if data.added:
 			local_doc = update_row_added(local_doc, data.added)
 
-		if update.mapping:
+		if update.mapping and not shall_ignore_mapping_and_dependencies():
 			if update.get("dependencies"):
 				dependencies_created = sync_mapped_dependencies(update.dependencies, producer_site)
 				for fieldname, value in dependencies_created.items():
@@ -440,6 +451,8 @@ def sync_dependencies(document, producer_site):
 			sync_dynamic_link_dependencies(doc, dl_fields, producer_site)
 
 	def sync_child_table_dependencies(doc, table_fields, producer_site):
+		if shall_ignore_mapping_and_dependencies():
+			raise Exception("Child Table dependency is not supported")
 		for df in table_fields:
 			child_table = doc.get(df.fieldname)
 			for entry in child_table:
@@ -456,23 +469,29 @@ def sync_dependencies(document, producer_site):
 			docname = doc.get(df.fieldname)
 			linked_doctype = doc.get(df.options)
 			if docname and not check_dependency_fulfilled(linked_doctype, docname):
-				master_doc = producer_site.get_doc(linked_doctype, docname)
-				frappe.get_doc(master_doc).insert(set_name=docname)
+				if shall_ignore_mapping_and_dependencies():
+					raise Exception(f"dependency issue for the given dynamic link of {docname}: {linked_doctype}")
+				else:
+					master_doc = producer_site.get_doc(linked_doctype, docname)
+					frappe.get_doc(master_doc).insert(set_name=docname)
 
 	def set_dependencies(doc, link_fields, producer_site):
 		for df in link_fields:
 			docname = doc.get(df.fieldname)
 			linked_doctype = df.get_link_doctype()
 			if docname and not check_dependency_fulfilled(linked_doctype, docname):
-				master_doc = producer_site.get_doc(linked_doctype, docname)
-				try:
-					master_doc = frappe.get_doc(master_doc)
-					master_doc.insert(set_name=docname)
-					frappe.db.commit()
+				if shall_ignore_mapping_and_dependencies():
+					raise Exception(f"dependency issue for the given link of {docname}: {linked_doctype}")
+				else:
+					master_doc = producer_site.get_doc(linked_doctype, docname)
+					try:
+						master_doc = frappe.get_doc(master_doc)
+						master_doc.insert(set_name=docname)
+						frappe.db.commit()
 
-				# for dependency inside a dependency
-				except Exception:
-					dependencies[master_doc] = True
+					# for dependency inside a dependency
+					except Exception:
+						dependencies[master_doc] = True
 
 	def check_dependency_fulfilled(linked_doctype, docname):
 		return frappe.db.exists(linked_doctype, docname)
@@ -496,7 +515,7 @@ def sync_dependencies(document, producer_site):
 		if not any(list(dependencies.values())[1:]):
 			dependencies[document] = False
 
-
+# should not invoke if shall_ignore_mapping_and_dependencies() is True
 def sync_mapped_dependencies(dependencies, producer_site):
 	dependencies_created = {}
 	for entry in dependencies:
@@ -530,7 +549,7 @@ def log_event_sync(update, event_producer, sync_status, error=None):
 		doc.error = error
 	doc.insert()
 
-
+# should not invoke if shall_ignore_mapping_and_dependencies() is True
 def get_mapped_update(update, producer_site):
 	"""get the new update document with mapped fields"""
 	mapping = frappe.get_doc("Document Type Mapping", update.mapping)
@@ -550,8 +569,10 @@ def get_mapped_update(update, producer_site):
 
 @frappe.whitelist()
 def new_event_notification(producer_url):
+	# we design pull-push mechanism so ignore if an event notification comes from a producer
+	return
 	"""Pull data from producer when notified"""
-	enqueued_method = "data_sync.data_sync.doctype.event_producer.event_producer.pull_from_node"
+	enqueued_method = ("data_sync.data_sync.doctype.event_producer.event_producer.pull_from_node")
 	jobs = get_jobs()
 	if not jobs or enqueued_method not in jobs[frappe.local.site]:
 		frappe.enqueue(enqueued_method, queue="default", **{"event_producer": producer_url})
@@ -561,9 +582,100 @@ def new_event_notification(producer_url):
 def resync(update):
 	"""Retry syncing update if failed"""
 	update = frappe._dict(json.loads(update))
+	# todo: I added the line below - better check for other cases.
+	update.data = frappe._dict(json.loads(update.data))
 	producer_site = get_producer_site(update.event_producer)
 	event_producer = frappe.get_doc("Event Producer", update.event_producer)
-	if update.mapping:
+	if update.mapping and not shall_ignore_mapping_and_dependencies():
 		update = get_mapped_update(update, producer_site)
 		update.data = json.loads(update.data)
 	return sync(update, producer_site, event_producer, in_retry=True)
+
+
+### new methods
+
+def shall_ignore_mapping_and_dependencies():
+		return is_client_box()	
+	
+
+@frappe.whitelist()
+def get_producer(producer_url):
+	producer_doc = frappe.get_doc("Event Producer", producer_url)
+	if producer_doc:
+		return json.dumps(producer_doc.get_request_data())
+	return None
+
+@frappe.whitelist()
+def update_producer_after_consumer_creation(data):
+	data = json.loads(data)
+	last_update = data.get("last_update")
+	producer_url = data.get("producer_url")
+	producer_doc = frappe.get_doc("Event Producer", producer_url)
+	producer_doc.incoming_change = True
+	producer_doc.set_last_update(last_update)
+	producer_doc.create_custom_fields()
+	producer_doc.save()
+
+@frappe.whitelist()
+def get_update_config(producer_url):
+	producer_doc = frappe.get_doc("Event Producer", producer_url)
+	(doctypes, mapping_config, naming_config) = get_config(producer_doc.producer_doctypes)
+	last_update = producer_doc.get_last_update()
+	return json.dumps(
+		{
+			"event_consumer": get_url(),
+			"doctypes": frappe.as_json(doctypes),
+			"last_update": last_update,
+		}
+	)
+
+@frappe.whitelist()
+def get_pushed_updates(producer_url, update_logs):
+	"""get updates from the event producer"""
+
+	event_producer = frappe.get_doc("Event Producer", producer_url)
+	last_update = event_producer.get_last_update()
+
+	(doctypes, mapping_config, naming_config) = get_config(event_producer.producer_doctypes)
+	update_logs = frappe.parse_json(update_logs)
+	updates = [frappe._dict(d) for d in (update_logs or [])]
+	producer_site = None
+	for update in updates:
+		update.use_same_name = naming_config.get(update.ref_doctype)
+		mapping = mapping_config.get(update.ref_doctype)
+		if mapping and not shall_ignore_mapping_and_dependencies():
+			update.mapping = mapping
+			update = get_mapped_update(update, producer_site)
+		if not update.update_type == "Delete":
+			update.data = json.loads(update.data)
+
+		sync(update, producer_site, event_producer)
+
+
+@frappe.whitelist()
+def get_producer_updates(producer_url, event_consumer):
+	event_producer = frappe.get_doc("Event Producer", producer_url)
+	event_consumer = frappe.parse_json(event_consumer)
+	event_consumer = frappe._dict(event_consumer)
+
+	config = event_consumer.consumer_doctypes
+	event_consumer.consumer_doctypes = []
+	for entry in event_producer.producer_doctypes:
+		if entry.has_mapping:
+			# if mapping, subscribe to remote doctype on consumer's site
+			ref_doctype = frappe.db.get_value("Document Type Mapping", entry.mapping, "remote_doctype")
+		else:
+			ref_doctype = entry.ref_doctype
+
+		event_consumer.consumer_doctypes.append(
+			{
+				"ref_doctype": ref_doctype,
+				"status": get_approval_status(config, ref_doctype),
+				"unsubscribed": entry.unsubscribe,
+				"condition": entry.condition,
+			}
+		)
+	event_consumer.user = event_producer.user
+	event_consumer.incoming_change = True
+
+	return event_consumer
