@@ -1,0 +1,79 @@
+{
+ "actions": [],
+ "autoname": "prompt",
+ "creation": "2024-03-14 02:49:38.817592",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "server_info_section",
+  "server_url",
+  "user",
+  "column_break_jiue",
+  "api_key",
+  "api_secret"
+ ],
+ "fields": [
+  {
+   "fieldname": "server_info_section",
+   "fieldtype": "Section Break",
+   "label": "Server Info"
+  },
+  {
+   "fieldname": "server_url",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Server URL",
+   "reqd": 1
+  },
+  {
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "label": "Event Subscriber",
+   "options": "User",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_jiue",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "API Key of the user(Event Subscriber) on the server",
+   "fieldname": "api_key",
+   "fieldtype": "Data",
+   "label": "API Key",
+   "reqd": 1
+  },
+  {
+   "description": "API Secret of the user(Event Subscriber) on the server",
+   "fieldname": "api_secret",
+   "fieldtype": "Password",
+   "label": "API Secret",
+   "reqd": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2024-03-14 03:09:41.950583",
+ "modified_by": "Administrator",
+ "module": "Data Sync",
+ "name": "Event Server",
+ "naming_rule": "Set by user",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
