@@ -5,8 +5,7 @@ frappe.ui.form.on("Event Server", {
 	refresh: function(frm) {
     frappe.db.get_single_value('Box Settings', 'box_type')
       .then(box_type => {
-        if (box_type == "Service Box")
-          // Custom buttons
+        if (box_type == "Service Box"){
           frm.add_custom_button('Sync with Server as Consumer', () => {
             frappe.call({
               method: "data_sync.data_sync.doctype.event_server.event_server.sync_server",
@@ -37,7 +36,6 @@ frappe.ui.form.on("Event Server", {
               }
             });
           })
-          // Custom buttons
           frm.add_custom_button('Push Data as Producer', () => {
             frappe.call({
               method: "data_sync.data_sync.doctype.event_server.event_server.push_data",
@@ -53,6 +51,7 @@ frappe.ui.form.on("Event Server", {
               }
             });
           })
+        }
       })
   }
 });
