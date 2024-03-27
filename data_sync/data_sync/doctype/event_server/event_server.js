@@ -6,22 +6,37 @@ frappe.ui.form.on("Event Server", {
     frappe.db.get_single_value('Box Settings', 'box_type')
       .then(box_type => {
         if (box_type == "Service Box"){
-          frm.add_custom_button('Sync with Server as Consumer', () => {
+          frm.add_custom_button('Sync Consumer Event', () => {
             frappe.call({
-              method: "data_sync.data_sync.doctype.event_server.event_server.sync_server",
+              method: "data_sync.data_sync.doctype.event_server.event_server.sync_consumer_event",
               args: {
                 
               },
               freeze: true,
               callback: function (r) {
-                frappe.msgprint("The Event Consumer for the server is updated");
+                frappe.msgprint("The server is registered/updated as Event Consumer");
               },
               error: (r) => {
                 frappe.msgprint("Something went wrong, please try again later\n" + r.message);
               }
             });
           })
-          frm.add_custom_button('Pull Data as Consumer', () => {
+          frm.add_custom_button('Sync Producer Event', () => {
+            frappe.call({
+              method: "data_sync.data_sync.doctype.event_server.event_server.sync_producer_event",
+              args: {
+                
+              },
+              freeze: true,
+              callback: function (r) {
+                frappe.msgprint("The server is registered/updated as Event Producer");
+              },
+              error: (r) => {
+                frappe.msgprint("Something went wrong, please try again later\n" + r.message);
+              }
+            });
+          })
+          frm.add_custom_button('Pull Data from Server (through event producer)', () => {
             frappe.call({
               method: "data_sync.data_sync.doctype.event_server.event_server.pull_data",
               args: {
@@ -36,7 +51,7 @@ frappe.ui.form.on("Event Server", {
               }
             });
           })
-          frm.add_custom_button('Push Data as Producer', () => {
+          frm.add_custom_button('Push Data to Server (through event consumer)', () => {
             frappe.call({
               method: "data_sync.data_sync.doctype.event_server.event_server.push_data",
               args: {

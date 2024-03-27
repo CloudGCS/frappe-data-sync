@@ -6,6 +6,7 @@ import os
 
 import requests
 
+from data_sync.data_sync.services.base_app_services import is_client_box, is_service_box
 import frappe
 from frappe import _
 from frappe.frappeclient import FrappeClient
@@ -27,8 +28,8 @@ class EventConsumer(Document):
 			doc_before_save = self.get_doc_before_save()
 			if doc_before_save.api_key != self.api_key or doc_before_save.api_secret != self.api_secret:
 				return
-
-			self.update_consumer_status()
+			if is_service_box():
+				self.update_consumer_status()
 		else:
 			frappe.db.set_value(self.doctype, self.name, "incoming_change", 0)
 
@@ -219,3 +220,43 @@ def has_consumer_access(consumer, update_log):
 	except Exception as e:
 		consumer.log_error("has_consumer_access error")
 	return False
+
+### new methods
+
+def shall_ignore_mapping_and_dependencies():
+		return is_client_box()
+
+@frappe.whitelist()
+def get_consumer(consumer_url):
+	consumer_doc = frappe.get_doc("Event Consumer", consumer_url)
+	if consumer_doc:
+		return True
+	return None
+
+@frappe.whitelist()
+def get_consumer_updates(consumer_url, event_producer):
+	if is_service_box():
+		raise Exception("This method is only available for Client Box")
+	event_consumer = frappe.get_doc("Event Consumer", consumer_url)
+	event_producer = frappe.parse_json(event_producer)
+	event_producer = frappe._dict(event_producer)
+
+	config = event_producer.producer_doctypes
+	event_producer.producer_doctypes = []
+	for entry in config:
+		# if entry.get("has_mapping") or shall_ignore_mapping_and_dependencies():
+		# 	# ref_doctype = consumer_site.get_value(
+		# 	# 	"Document Type Mapping", "remote_doctype", entry.get("mapping")
+		# 	# ).get("remote_doctype")
+		# else:
+		ref_doctype = entry.get("ref_doctype")
+
+		entry["status"] = frappe.db.get_value(
+			"Event Consumer Document Type", {"parent": event_consumer.name, "ref_doctype": ref_doctype}, "status"
+		)
+
+	event_producer.producer_doctypes = config
+	# when producer doc is updated it updates the consumer doc
+	# set flag to avoid deadlock
+	event_producer.incoming_change = True
+	return event_producer

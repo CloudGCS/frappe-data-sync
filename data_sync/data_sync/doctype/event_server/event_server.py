@@ -33,7 +33,7 @@ class EventServer(Document):
 
 
 @frappe.whitelist()
-def sync_server(*args,**kwargs):
+def sync_consumer_event(*args,**kwargs):
   if is_client_box():
     raise Exception("This method is only available for Service Box")
   
@@ -83,12 +83,6 @@ def sync_server(*args,**kwargs):
 
         event_consumer_doc.set("consumer_doctypes", consumer_doctypes)
         event_consumer_doc.save()
-        #   frappe.throw(
-        #   _(
-        #     "There is already an Event Consumer for the current site matches with the server."
-        #   )
-        # )
-
       else:
         last_update_as_string = register_consumer(response)
         last_update = json.loads(last_update_as_string)["last_update"]
@@ -106,6 +100,57 @@ def sync_server(*args,**kwargs):
   else:
     raise Exception("The server is not online")
 
+
+@frappe.whitelist()
+def sync_producer_event(*args, **kwargs):
+  if is_client_box():
+    raise Exception("This method is only available for Service Box")
+  
+  server = frappe.get_doc("Event Server")
+  if not server.is_server_online():
+        raise Exception("The server is not online")
+  server_site = FrappeClient(
+        url=server.server_url, api_key=server.api_key, api_secret=server.get_password("api_secret")
+      )
+  response = server_site.get_api(
+    "data_sync.data_sync.doctype.event_consumer.event_consumer.get_consumer",
+    params={"consumer_url": get_url()},
+  )
+
+  if not response:
+    frappe.throw(_("Failed to check server or no Event Consumer exists for the current site"))
+
+  event_producer_doc = frappe.get_doc("Event Producer", server.server_url)
+  if not event_producer_doc:
+    frappe.throw(_("No Event Producer exists for the current site"))
+
+  updated_producer = server_site.post_request(
+    {
+      "cmd": "data_sync.data_sync.doctype.event_consumer.event_consumer.get_consumer_updates",
+      "consumer_url": get_url(),
+      "event_producer": frappe.as_json(event_producer_doc),
+    }
+  )
+  event_producer_doc.user = updated_producer["user"]
+  event_producer_doc.incoming_change = updated_producer["incoming_change"]
+  
+  event_producer_doc.set("producer_doctypes", [])
+
+  # then create new producer doctypes from the updated producer["producer_doctypes"]
+  producer_doctypes = []
+  for producer_doctype in updated_producer["producer_doctypes"]:
+    producer_doctype_doc = frappe.new_doc("Event Producer Document Type")
+    producer_doctype_doc.parent = event_producer_doc.name
+    producer_doctype_doc.parenttype = "Event Producer"
+    producer_doctype_doc.parentfield = "producer_doctypes"
+    producer_doctype_doc.ref_doctype = producer_doctype["ref_doctype"]
+    producer_doctype_doc.status = producer_doctype["status"]
+    producer_doctype_doc.insert()
+    producer_doctypes.append(producer_doctype_doc)
+
+  event_producer_doc.set("producer_doctypes", producer_doctypes)
+  event_producer_doc.save()
+    
 
 @frappe.whitelist()
 def pull_data(*args,**kwargs):
